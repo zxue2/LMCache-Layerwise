@@ -20,6 +20,7 @@ import torch
 # First Party
 from lmcache import device_ops
 from lmcache.logging import init_logger
+from lmcache.v1.distributed import pending_fill
 from lmcache.v1.gpu_connector.gpu_ops import build_staging_copies
 from lmcache.v1.memory_allocators.lazy_memory_allocator import LazyMemoryAllocator
 from lmcache.v1.memory_management import GDSMemoryObject, MemoryObj
@@ -585,6 +586,11 @@ def transfer_kv_layerwise(
     batch is enqueued and announced as soon as it is built. Objects that do
     not fit the staging arena run in further passes.
 
+    Objects a pipelined L2 load is still writing (see
+    :mod:`lmcache.v1.distributed.pending_fill`) force ``enqueue_per_batch``,
+    and each batch waits until its bytes are written, so copying the first
+    layers overlaps decompressing the rest.
+
     Args:
         cache_context: A layer-wise cache context.
         block_ids_gpu: GPU block IDs, indexed by kernel group.
@@ -600,6 +606,7 @@ def transfer_kv_layerwise(
     Raises:
         NotImplementedError: For objects not backed by the lazy allocator.
         ValueError: For a None object inside the window.
+        FillFailedError: If the load writing an object fails or stalls.
     """
     del batch_size
     chunk_size = cache_context.lmcache_tokens_per_chunk
@@ -622,6 +629,15 @@ def transfer_kv_layerwise(
             chunks.append((idx, mo))
     if not chunks or not plan.batches:
         return
+    fills = list(
+        {
+            id(fill): fill
+            for fill in (pending_fill.find(mo) for _, mo in chunks)
+            if fill is not None
+        }.values()
+    )
+    if fills:
+        enqueue_per_batch = True
 
     base_obj_idx = chunks[0][0]
     first_start_token = base_obj_idx * chunk_size
@@ -649,6 +665,8 @@ def transfer_kv_layerwise(
     native_seconds = 0.0
     batch_args: list[tuple[Any, ...]] = []
     for batch in plan.batches:
+        for fill in fills:
+            fill.wait(batch.run_offset + batch.run_bytes)
         max_per_pass = len(batch.unit_ptrs)
         units_needed = min(max_per_pass, len(chunks))
         specs = [

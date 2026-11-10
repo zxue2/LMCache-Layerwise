@@ -10,6 +10,8 @@ layer's bytes in an object must land in that layer only.
 # Standard
 import importlib.util
 import random
+import threading
+import time
 
 # Third Party
 import pytest
@@ -24,6 +26,7 @@ if importlib.util.find_spec("lmcache_layerwise._C") is None:
     pytest.skip("lmcache_layerwise._C is not built", allow_module_level=True)
 
 # First Party
+from lmcache.v1.distributed import pending_fill  # noqa: E402
 from lmcache.v1.memory_allocators.lazy_memory_allocator import (  # noqa: E402
     LazyMemoryAllocator,
 )
@@ -181,6 +184,66 @@ def test_round_trip(allocator, model_depths, layer_batch, expected, enqueue_per_
             untouched = torch.ones(t.shape[1], dtype=torch.bool, device=_DEVICE)
             untouched[ids] = False
             assert int(t[:, untouched].view(torch.int16).abs().sum()) == 0
+        for obj in objs:
+            allocator.free(obj)
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("ok", [True, False])
+def test_retrieve_waits_for_a_pending_fill(allocator, ok):
+    """Each batch is copied only once a background fill has written it; a
+    failed fill fails the retrieve after the batches it did write."""
+    recorder = _Recorder()
+    ctx, tensors, _ = _make_context(None, 1, recorder)
+    try:
+        block_ids = _block_ids(ctx)
+        objs = _allocate(allocator, ctx)
+        _transfer(ctx, block_ids, objs, D2H)
+        snapshot = [t.clone() for t in tensors]
+        for t in tensors:
+            t.zero_()
+        size = objs[0].get_size()
+        layer_bytes = size // _NUM_LAYERS
+        views = [obj.raw_tensor.view(torch.uint8)[:size] for obj in objs]
+        saved = [v.clone() for v in views]
+        for v in views:
+            v.zero_()
+        fill = pending_fill.FillTracker(objs)
+
+        def decompress() -> None:
+            for layer in range(_NUM_LAYERS):
+                time.sleep(0.02)
+                if not ok and layer == _NUM_LAYERS - 1:
+                    fill.settle(False)
+                    return
+                lo, hi = layer * layer_bytes, (layer + 1) * layer_bytes
+                for v, data in zip(views, saved, strict=True):
+                    v[lo:hi] = data[lo:hi]
+                fill.advance(hi)
+            fill.settle(True)
+
+        worker = threading.Thread(target=decompress)
+        worker.start()
+        try:
+            if ok:
+                _transfer(ctx, block_ids, objs, H2D)
+            else:
+                with pytest.raises(pending_fill.FillFailedError):
+                    _transfer(ctx, block_ids, objs, H2D)
+        finally:
+            worker.join()
+
+        if ok:
+            assert recorder.batches == [[0], [1], [2], [3]]
+            ids = torch.tensor(block_ids, device=_DEVICE)
+            for t, snap in zip(tensors, snapshot, strict=True):
+                assert torch.equal(
+                    t[:, ids].view(torch.int16), snap[:, ids].view(torch.int16)
+                )
+        else:
+            assert recorder.batches == [[0], [1], [2]]
+            fill.release()
         for obj in objs:
             allocator.free(obj)
     finally:

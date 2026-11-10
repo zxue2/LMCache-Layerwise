@@ -175,6 +175,9 @@ class GPULayerwiseCacheContext(GPUCacheContext):
             layer-major layout cannot address.
     """
 
+    # Retrieves wait on each layer batch's bytes before copying them.
+    reads_filling_objects = True
+
     def __init__(
         self,
         kv_caches: KVCache,

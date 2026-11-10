@@ -238,6 +238,25 @@ handler itself is LMCache's, reached through `transfer_object_group`.
    would be one more point where a thread drops the GIL and waits to take
    it back.
 
+### 4.5 Pipelined Decompression
+
+With LMCache's `accel_kv_compress` serde and `"pipelined_load": true`, a
+prefetch completes before its objects are decompressed, and each object
+carries a `FillTracker` from `lmcache.v1.distributed.pending_fill`.
+`GPULayerwiseCacheContext` sets `reads_filling_objects`, so the retrieve
+gets such objects without waiting. `transfer_kv_layerwise` then:
+
+1. Collects the objects' trackers. If there are any, it enqueues per batch,
+   as with `enqueue_per_batch`, whatever the configuration.
+2. Before enqueuing a batch, waits until every tracker has written
+   `[0, run_offset + run_bytes)`. Batch g is copied and its frame published
+   while the serde decompresses group g + 1.
+3. Raises `FillFailedError` when a fill fails before covering a batch. The
+   batches already enqueued stay valid.
+
+Set the serde's `num_groups` to the number of layers divided by
+`batch_layers`, so that one decompression group is one batch.
+
 ---
 
 ## 5. Staging Buffer
