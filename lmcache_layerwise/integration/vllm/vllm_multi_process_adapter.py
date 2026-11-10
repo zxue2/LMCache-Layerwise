@@ -18,8 +18,9 @@ from lmcache.integration.vllm.vllm_multi_process_adapter import (
     _IpcEvent,
 )
 from lmcache.logging import init_logger
+from lmcache.v1.client.worker_transfer import TransferContext
 from lmcache.v1.mp_observability.errors import LMCacheTimeoutError
-from lmcache.v1.multiprocess.transfer_context import TransferContext
+from lmcache.v1.platform.fd_channel import fd_channel_path_for_url
 
 # First Party
 from lmcache_layerwise import debug
@@ -144,6 +145,7 @@ class LMCacheLayerwiseMPWorkerAdapter(LMCacheMPWorkerAdapter):
             self.req_client,
             model_depths=depths,
             frames_host=self._frames_host,
+            fd_channel_path=fd_channel_path_for_url(self._server_url),
         )
 
     def get_finished(

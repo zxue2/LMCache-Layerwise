@@ -87,12 +87,6 @@ def module(monkeypatch):
     monkeypatch.setattr(event_pool, "torch_dev", no_guard)
     monkeypatch.setattr(layerwise_transfer, "torch_dev", no_guard)
     module = LayerwiseTransferModule(SimpleNamespace(), layer_batch=2)
-    module.released = []
-    monkeypatch.setattr(
-        module,
-        "_release_failed_retrieve_locks",
-        lambda key, instance_id: module.released.append(instance_id),
-    )
     yield module
     if module._frames is not None:
         module._frames.close()
@@ -267,7 +261,7 @@ def test_a_failed_retrieve_still_signals_every_layer(module, monkeypatch):
     assert response == protocol.RetrieveResponse(b"", False, [0, 0, 0, 0])
 
 
-def test_retrieve_without_events_is_refused_and_releases_locks(module, monkeypatch):
+def test_retrieve_without_events_is_refused(module, monkeypatch):
     _register(module)
     _stub_base_retrieve(monkeypatch, [[0]])
 
@@ -275,7 +269,6 @@ def test_retrieve_without_events_is_refused_and_releases_locks(module, monkeypat
 
     response = protocol.decode(reply.payload, protocol.RetrieveResponse)
     assert response == protocol.RetrieveResponse(b"", False, [])
-    assert module.released == [_INSTANCE]
 
 
 def test_the_signal_is_unbound_after_a_retrieve(module, monkeypatch):
@@ -290,9 +283,8 @@ def test_the_signal_is_unbound_after_a_retrieve(module, monkeypatch):
     assert module._tls.signal is None
 
 
-def test_plain_retrieve_is_refused_and_releases_locks(module):
+def test_plain_retrieve_is_refused(module):
     assert module.retrieve(_key(), _INSTANCE, [[0]], b"ev") == (b"", False)
-    assert module.released == [_INSTANCE]
 
 
 def test_depths_reach_the_cache_context(module, monkeypatch):

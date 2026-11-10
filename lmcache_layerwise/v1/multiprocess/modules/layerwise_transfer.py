@@ -295,14 +295,13 @@ class LayerwiseTransferModule(LMCacheDrivenTransferModule):
         Returns:
             ``(b"", False)``.
         """
-        del gpu_block_ids, event_ipc_handle, skip_first_n_tokens
+        del key, gpu_block_ids, event_ipc_handle, skip_first_n_tokens
         logger.error(
             "Rejecting plain retrieve for GPU instance ID %d: this server "
             "stores layer-major objects and serves layerwise.retrieve only. "
             "Run the worker with the layer-wise connector.",
             instance_id,
         )
-        self._release_locks_quietly(key, instance_id)
         return b"", False
 
     def set_model_depths(self, instance_id: int, depths: list[int]) -> None:
@@ -349,16 +348,6 @@ class LayerwiseTransferModule(LMCacheDrivenTransferModule):
         if frames is not None:
             frames.publish(instance_id, frame)
 
-    def _release_locks_quietly(self, key: IPCCacheServerKey, instance_id: int) -> None:
-        try:
-            self._release_failed_retrieve_locks(key, instance_id)
-        except Exception:
-            # The answer must still be sent.
-            logger.exception(
-                "Failed to release retrieve locks for GPU instance ID %d",
-                instance_id,
-            )
-
     def retrieve_layerwise(
         self, request: protocol.RetrieveRequest
     ) -> protocol.RetrieveResponse:
@@ -380,7 +369,6 @@ class LayerwiseTransferModule(LMCacheDrivenTransferModule):
                 "registered, or layerwise.register_events was not called.",
                 instance_id,
             )
-            self._release_locks_quietly(request.key, instance_id)
             return protocol.RetrieveResponse(b"", False, [])
 
         cache_context = entry.cache_context

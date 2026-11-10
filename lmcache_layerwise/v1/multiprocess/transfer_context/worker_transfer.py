@@ -23,6 +23,10 @@ import zmq
 from lmcache import torch_dev
 from lmcache.logging import init_logger
 from lmcache.utils import EngineType
+from lmcache.v1.client.worker_transfer import (
+    IPCEvent,
+    LMCacheDrivenTransferContext,
+)
 from lmcache.v1.gpu_connector.utils import LayoutHints
 from lmcache.v1.mp_observability.errors import LMCacheTimeoutError
 from lmcache.v1.multiprocess.futures import MessagingFuture
@@ -30,10 +34,6 @@ from lmcache.v1.multiprocess.group_view import EngineGroupInfo
 from lmcache.v1.multiprocess.protocols.server_module import (
     ServerModuleCallRequest,
     ServerModuleCallResponse,
-)
-from lmcache.v1.multiprocess.transfer_context.worker_transfer import (
-    IPCEvent,
-    LMCacheDrivenTransferContext,
 )
 from lmcache.v1.multiprocess.transport.base import RequestClient
 from lmcache.v1.platform.base.event_ipc import EventIPCBackend
@@ -287,6 +287,8 @@ class LayerwiseTransferContext(LMCacheDrivenTransferContext):
             None to order layers by registration.
         frames_host: Host of the server's frame channel; the host the
             request server is reached at.
+        fd_channel_path: Socket path of the server's fd channel; see
+            :class:`LMCacheDrivenTransferContext`.
     """
 
     def __init__(
@@ -295,8 +297,9 @@ class LayerwiseTransferContext(LMCacheDrivenTransferContext):
         req_client: RequestClient,
         model_depths: Sequence[int] | None = None,
         frames_host: str = "127.0.0.1",
+        fd_channel_path: str = "",
     ) -> None:
-        super().__init__(instance_id, req_client)
+        super().__init__(instance_id, req_client, fd_channel_path)
         self._model_depths = None if model_depths is None else list(model_depths)
         self._frames_host = frames_host
         self._pool: EventPool | None = None
@@ -325,6 +328,7 @@ class LayerwiseTransferContext(LMCacheDrivenTransferContext):
         layout_hints: LayoutHints | None = None,
         engine_group_infos: Sequence[EngineGroupInfo] = (),
         engine_type: EngineType = EngineType.VLLM,
+        lmcache_chunk_tokens: int | None = None,
     ) -> None:
         """Register as LMCache does, then set up the layer-wise state.
 
@@ -353,6 +357,7 @@ class LayerwiseTransferContext(LMCacheDrivenTransferContext):
             layout_hints,
             engine_group_infos,
             engine_type,
+            lmcache_chunk_tokens,
         )
         if self._is_closed():
             return

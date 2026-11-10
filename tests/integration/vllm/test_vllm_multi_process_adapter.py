@@ -10,6 +10,7 @@ from lmcache.integration.vllm.vllm_multi_process_adapter import (
     LMCacheMPWorkerAdapter,
 )
 from lmcache.v1.mp_observability.errors import LMCacheTimeoutError
+from lmcache.v1.platform.fd_channel import fd_channel_path_for_url
 from lmcache_layerwise import debug
 from lmcache_layerwise.integration.vllm import vllm_multi_process_adapter as mod
 from lmcache_layerwise.integration.vllm.vllm_multi_process_adapter import (
@@ -48,6 +49,7 @@ def _adapter(names=("model.layers.0.a", "model.layers.0.b", "model.layers.1.a"))
     adapter.instance_id = 9
     adapter.req_client = object()
     adapter._frames_host = "server"
+    adapter._server_url = "tcp://server:5555"
     adapter.retrieve_futures = {}
     adapter.retrieve_events = {}
     adapter.error_block_ids = set()
@@ -85,6 +87,7 @@ def test_the_context_reports_the_depths_and_replaces_the_previous_one():
     assert ctx._model_depths == [0, 0, 1]
     assert ctx._instance_id == 9
     assert ctx._frames_host == "server"
+    assert ctx._fd_channel_path == fd_channel_path_for_url("tcp://server:5555")
 
     previous = _Ctx()
     adapter.transfer_ctx = previous

@@ -11,6 +11,7 @@ import torch
 import zmq
 
 # First Party
+from lmcache.v1.client import worker_transfer as core
 from lmcache.v1.mp_observability.errors import LMCacheTimeoutError
 from lmcache.v1.multiprocess.custom_types import IPCCacheServerKey
 from lmcache.v1.multiprocess.futures import MessagingFuture
@@ -18,7 +19,6 @@ from lmcache.v1.multiprocess.protocols.server_module import (
     ServerModuleCallResponse,
 )
 from lmcache.v1.multiprocess.token_codec import pack_token_ids
-from lmcache.v1.multiprocess.transfer_context import worker_transfer as core
 from lmcache_layerwise import debug
 from lmcache_layerwise.v1.multiprocess import protocol
 from lmcache_layerwise.v1.multiprocess.transfer_context import worker_transfer
@@ -153,7 +153,8 @@ def _caches(n=4):
 
 def _registered(client, depths=(0, 1, 2, 3)):
     ctx = LayerwiseTransferContext(_INSTANCE, client, model_depths=depths)
-    ctx.register(_caches(len(depths)), "m", 1, 16, 5.0)
+    # Keyword arguments as LMCache's worker adapter passes them.
+    ctx.register(_caches(len(depths)), "m", 1, 16, 5.0, lmcache_chunk_tokens=256)
     return ctx
 
 
